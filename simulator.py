@@ -2,15 +2,18 @@ import signal_generator
 import random
 
 # ===== CONFIGURATION =====
-STARTING_CAPITAL = 100.0  # 💸 You can change this to simulate more/less money
-POSITION_SIZE = 0.10      # % of capital per trade (e.g. 0.10 = 10%)
-FEE_BINANCE = 0.001       # 0.1% fee
-SPREAD_OANDA = 0.0005     # Simulated OANDA spread (0.05%)
+STARTING_CAPITAL = 100.0  # Change this for different bankrolls
+POSITION_SIZE = 0.10      # 10% per trade
+FEE_BINANCE = 0.001       # 0.1%
+SPREAD_OANDA = 0.0005     # 0.05%
+MAX_TRADES_TRACKED = 20   # Rolling accuracy window
 BROKER_MAP = {
     "Binance": ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "AVAX-USD"],
     "OANDA": ["EURUSD=X", "GBPJPY=X", "USDJPY=X", "XAUUSD=X", "CL=F"]
 }
 # ==========================
+
+last_results = []
 
 def get_broker(symbol):
     for broker, assets in BROKER_MAP.items():
@@ -26,7 +29,7 @@ def simulate_trade(signal_data, capital):
         price = float(lines[4].split(":")[1].strip().replace("$", ""))
         broker = get_broker(symbol)
     except Exception as e:
-        print(f"Skipping invalid signal: {e}")
+        print(f"⚠️ Skipping invalid signal: {e}")
         return 0, False
 
     if signal == "HOLD":
@@ -35,22 +38,38 @@ def simulate_trade(signal_data, capital):
     trade_size = capital * POSITION_SIZE
     units = trade_size / price
 
-    # Simulate win or loss (randomized for now, later we’ll use real price move data)
-    win = random.random() < 0.6  # 60% win rate assumption
-    move_pct = random.uniform(0.01, 0.03)  # Simulate 1%–3% price moves
-    pnl = units * price * move_pct
-    pnl = pnl if win else -pnl
+    # Simulate win/loss
+    win = random.random() < 0.6
+    move_pct = random.uniform(0.01, 0.03)
+    exit_price = price * (1 + move_pct if win else 1 - move_pct)
+    pnl = (exit_price - price) * units
+    gross_pnl = pnl
 
-    # Deduct broker fees
+    # Broker fees
     if broker == "Binance":
-        fee = trade_size * FEE_BINANCE * 2  # entry + exit
+        fee = trade_size * FEE_BINANCE * 2
     elif broker == "OANDA":
         fee = trade_size * SPREAD_OANDA * 2
     else:
-        fee = 0.5  # fallback
+        fee = 0.5
 
-    net_result = pnl - fee
-    return net_result, win
+    net_pnl = gross_pnl - fee
+
+    # Track win/loss
+    last_results.append(win)
+    if len(last_results) > MAX_TRADES_TRACKED:
+        last_results.pop(0)
+
+    accuracy = round((sum(last_results) / len(last_results)) * 100, 2)
+
+    # 📬 Trade log
+    print(f"\n✅ Executed {signal} for {symbol} at ${price}")
+    print(f"📦 Size: €{round(trade_size, 2)} | Broker: {broker} | Fee: €{round(fee, 2)}")
+    print(f"📉 Closed position at ${round(exit_price, 2)}")
+    print(f"💸 PnL: {'+' if net_pnl >= 0 else ''}€{round(net_pnl, 2)} {'✅ WIN' if win else '❌ LOSS'}")
+    print(f"📈 Strategy Accuracy (last {len(last_results)} trades): {accuracy}%")
+
+    return net_pnl, win
 
 def run_simulation():
     capital = STARTING_CAPITAL
@@ -73,7 +92,7 @@ def run_simulation():
             else:
                 losses += 1
 
-    print("📈 SIMULATION COMPLETE")
+    print("\n📈 SIMULATION COMPLETE")
     print(f"💰 Starting Capital: €{STARTING_CAPITAL}")
     print(f"🔁 Total Trades: {total_trades}")
     print(f"✅ Wins: {wins} | ❌ Losses: {losses}")
